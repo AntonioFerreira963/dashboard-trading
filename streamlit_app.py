@@ -11,13 +11,11 @@ st.title("🤖 Robot Trading — ACHAT / SHORT / Cassures")
 # ============
 with st.sidebar:
     st.header("⚙️ Paramètres")
-    # Liste par défaut : Or + actions “Antonio”
+    # Liste par défaut : Or + miners BTC + tech + indices
     tickers_text = st.text_area(
-    "Tickers Yahoo (séparés par virgule)",
-    value="GC=F,RIOT,APLD,WULF,IREN,NVDA,BABA,SPY,QQQ,MSTR,TSLA",
-    height=80
-)
-
+        "Tickers Yahoo (séparés par virgule)",
+        value="GC=F,RIOT,APLD,WULF,IREN,NVDA,BABA,SPY,QQQ,MSTR,TSLA",
+        height=80
     )
     days = st.slider("Historique (jours)", 5, 365, 30)
     show_charts = st.checkbox("Afficher les graphiques (bas de page)", value=True)
@@ -26,7 +24,7 @@ with st.sidebar:
 # =====================
 #  HELPERS & CACHING
 # =====================
-def _pick_period_interval(days:int):
+def _pick_period_interval(days: int):
     if days <= 7:
         return ("7d", "15m")
     elif days <= 30:
@@ -48,12 +46,12 @@ def _ensure_close_volume(df: pd.DataFrame) -> pd.DataFrame:
     else:
         close = df.select_dtypes("number").iloc[:, -1]
     # volume
-    volume = df[low["volume"]] if "volume" in low else pd.Series([None]*len(df), index=df.index)
+    volume = df[low["volume"]] if "volume" in low else pd.Series([None] * len(df), index=df.index)
     out = pd.DataFrame({"close": close, "volume": volume})
     return out.dropna(subset=["close"])
 
 @st.cache_data(ttl=300, show_spinner=False)
-def last_price(ticker:str):
+def last_price(ticker: str):
     try:
         d = yf.Ticker(ticker).history(period="1d", interval="1m", prepost=True, actions=False)
         if d is None or d.empty:
@@ -65,7 +63,7 @@ def last_price(ticker:str):
         return None
 
 @st.cache_data(ttl=300, show_spinner=False)
-def load_series(ticker:str, period_days:int) -> pd.DataFrame:
+def load_series(ticker: str, period_days: int) -> pd.DataFrame:
     """Récupère une série fiable avec plusieurs fallback."""
     try:
         period, interval = _pick_period_interval(period_days)
@@ -92,31 +90,22 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     loss = (-delta.clip(upper=0)).rolling(14).mean()
     rs = gain / loss
     df["RSI"] = 100 - (100 / (1 + rs))
-
     # EMA
     df["EMA20"]  = df["close"].ewm(span=20, adjust=False).mean()
     df["EMA50"]  = df["close"].ewm(span=50, adjust=False).mean()
     df["EMA200"] = df["close"].ewm(span=200, adjust=False).mean()
-
-    # MACD (optionnel)
+    # MACD
     ema12 = df["close"].ewm(span=12, adjust=False).mean()
     ema26 = df["close"].ewm(span=26, adjust=False).mean()
     df["MACD"] = ema12 - ema26
     df["MACDsig"] = df["MACD"].ewm(span=9, adjust=False).mean()
-
     return df
 
 def classify_signal(row_now, row_prev):
     """
-    Renvoie un dict avec:
+    Renvoie un dict:
       'label' in {'ACHAT','SHORT','ATTENTE','CASSURE+','CASSURE-'}
       'reason' (texte court)
-    Règles simples (efficaces en intraday/swing):
-      - ACHAT si RSI<30 OU croisement haussier MACD OU rebond > EMA20 avec EMA20>EMA50
-      - SHORT si RSI>70 OU croisement baissier MACD OU rejet sous EMA20 avec EMA20<EMA50
-      - CASSURE+ si prix>EMA20>EMA50 et (prix passe au-dessus d’EMA20 aujourd’hui)
-      - CASSURE- si prix<EMA20<EMA50 et (prix passe sous EMA20 aujourd’hui)
-      - Sinon ATTENTE
     """
     p  = float(row_now["close"])
     rsi = float(row_now["RSI"]) if pd.notna(row_now["RSI"]) else None
@@ -127,46 +116,46 @@ def classify_signal(row_now, row_prev):
     em20_prev  = float(row_prev["EMA20"]) if pd.notna(row_prev["EMA20"]) else None
     price_prev = float(row_prev["close"])
 
-    # Croisements MACD
     macd_cross_up   = macd_prev is not None and macd_now is not None and macd_prev < 0 and macd_now > 0
     macd_cross_down = macd_prev is not None and macd_now is not None and macd_prev > 0 and macd_now < 0
 
-    # Cassures EMA20 vs prix (passage aujourd'hui)
-    cross_above_ema20 = em20_prev is not None and price_prev < em20_prev and p > ema20_now if ema20_now and em20_prev else False
-    cross_below_ema20 = em20_prev is not None and price_prev > em20_prev and p < ema20_now if ema20_now and em20_prev else False
+    cross_above_ema20 = (em20_prev is not None and ema20_now is not None
+                         and price_prev < em20_prev and p > ema20_now)
+    cross_below_ema20 = (em20_prev is not None and ema20_now is not None
+                         and price_prev > em20_prev and p < ema20_now)
 
-    # Cassure structurelle (EMA20 au-dessus de EMA50, et prix au-dessus de EMA20)
-    cassure_plus  = ema20_now and ema50_now and p>ema20_now>ema50_now and cross_above_ema20
-    cassure_moins = ema20_now and ema50_now and p<ema20_now<ema50_now and cross_below_ema20
+    cassure_plus  = (ema20_now is not None and ema50_now is not None
+                     and p > ema20_now > ema50_now and cross_above_ema20)
+    cassure_moins = (ema20_now is not None and ema50_now is not None
+                     and p < ema20_now < ema50_now and cross_below_ema20)
 
-    # Signaux "forts" immédiats
     if rsi is not None:
-        if rsi < 30 or macd_cross_up or (ema20_now and ema50_now and p>ema20_now>ema50_now and cross_above_ema20):
-            return {"label":"ACHAT","reason":f"RSI {rsi:.1f} / MACD↑ / EMA20>EMA50"}
-        if rsi > 70 or macd_cross_down or (ema20_now and ema50_now and p<ema20_now<ema50_now and cross_below_ema20):
-            return {"label":"SHORT","reason":f"RSI {rsi:.1f} / MACD↓ / EMA20<EMA50"}
+        if rsi < 30 or macd_cross_up or (ema20_now and ema50_now and p > ema20_now > ema50_now and cross_above_ema20):
+            return {"label": "ACHAT", "reason": f"RSI {rsi:.1f} / MACD↑ / EMA20>EMA50"}
+        if rsi > 70 or macd_cross_down or (ema20_now and ema50_now and p < ema20_now < ema50_now and cross_below_ema20):
+            return {"label": "SHORT", "reason": f"RSI {rsi:.1f} / MACD↓ / EMA20<EMA50"}
 
     if cassure_plus:
-        return {"label":"CASSURE+","reason":"Prix>EMA20>EMA50 (cassure)"}
+        return {"label": "CASSURE+", "reason": "Prix>EMA20>EMA50 (cassure)"}
     if cassure_moins:
-        return {"label":"CASSURE-","reason":"Prix<EMA20<EMA50 (cassure)"}
+        return {"label": "CASSURE-", "reason": "Prix<EMA20<EMA50 (cassure)"}
 
-    return {"label":"ATTENTE","reason":"Signal neutre"}
+    return {"label": "ATTENTE", "reason": "Signal neutre"}
 
 def calc_tp_sl(price, vol_pct=0.02):
     tp = price * (1 + vol_pct)
-    sl = price * (1 - vol_pct/1.3)
+    sl = price * (1 - vol_pct / 1.3)
     return tp, sl
 
 # =========================
 #   SCAN & CLASSIFICATION
 # =========================
 tickers = [t.strip() for t in tickers_text.split(",") if t.strip()]
-results = []  # lignes pour le tableau
+results = []
 
 for t in tickers:
     df = load_series(t, days)
-    if df.empty or len(df) < 50:  # besoin de données pour EMA50
+    if df.empty or len(df) < 50:
         results.append({"Ticker": t, "Prix": None, "RSI": None, "Signal": "N/A", "Raison": "Pas de données"})
         continue
 
@@ -206,7 +195,7 @@ def render_bucket(col, title, label):
     if subset.empty:
         col.write("—")
         return
-    subset = subset[["Ticker","Prix","RSI","TP_auto","SL_auto","Raison"]]
+    subset = subset[["Ticker", "Prix", "RSI", "TP_auto", "SL_auto", "Raison"]]
     col.dataframe(subset, use_container_width=True)
 
 render_bucket(col_buy,   "✅ ACHETER", "ACHAT")
@@ -222,8 +211,7 @@ st.caption("Les signaux sont basés sur RSI, croisements MACD, et structure EMA2
 if show_charts:
     st.divider()
     st.subheader("📊 Graphiques")
-    # On affiche jusqu'à 6 graphes (2 rangées de 3)
-    to_plot = tickers[:6]
+    to_plot = tickers[:6]  # jusqu'à 6 graphes
     for i in range(0, len(to_plot), 3):
         cols = st.columns(3)
         for j, t in enumerate(to_plot[i:i+3]):
