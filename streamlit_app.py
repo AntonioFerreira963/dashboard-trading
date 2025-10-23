@@ -101,6 +101,11 @@ def add_rsi(df, window=14):
     rs = gain / loss
     df["RSI"] = 100 - (100 / (1 + rs))
     return df
+def calc_tp_sl(price, vol_pct=0.02):
+    """Calcule TP et SL simples à partir d'un prix et d'une volatilité approx."""
+    tp = price * (1 + vol_pct)
+    sl = price * (1 - vol_pct/1.3)  # SL un peu plus serré
+    return tp, sl
 
 def chart_block(title, ticker):
     st.subheader(f"{title} — {ticker}")
@@ -108,19 +113,30 @@ def chart_block(title, ticker):
     if df.empty:
         st.warning("Pas de données (essaie 30 jours ou 7 jours, ou un autre ticker).")
         return
+
     df = add_rsi(df)
     st.line_chart(df[["close"]])
+
+    price = df["close"].iloc[-1]
     rsi = df["RSI"].dropna().iloc[-1] if "RSI" in df and df["RSI"].notna().any() else None
+
     if rsi is not None:
-        st.caption(f"RSI(14) : {rsi:.1f}")
+        st.caption(f"RSI(14) : {rsi:.1f} | Dernier prix : {price:,.2f}")
+
+        # Badge visuel
         if rsi < 30:
-            st.success("Signal rapide : **ACHAT POTENTIEL** (RSI < 30)")
+            st.success("✅ Signal rapide : **ACHAT POTENTIEL** (RSI < 30)")
         elif rsi > 70:
-            st.error("Signal rapide : **VENTE/SHORT POTENTIEL** (RSI > 70)")
+            st.error("🚨 Signal rapide : **SHORT/VENTE POTENTIEL** (RSI > 70)")
         else:
-            st.info("Signal rapide : **ATTENTE** (RSI neutre)")
+            st.info("➖ Signal rapide : **ATTENTE** (RSI neutre)")
+
+        # TP / SL auto
+        tp, sl = calc_tp_sl(price)
+        st.write(f"🎯 TP auto ≈ {tp:,.2f} | 🛑 SL auto ≈ {sl:,.2f}")
     else:
         st.caption("RSI indisponible pour cet intervalle.")
+
 
 colA, colB, colC = st.columns(3)
 with colA: chart_block("Or", xau_ticker)
