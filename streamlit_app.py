@@ -17,21 +17,49 @@ with st.sidebar:
     days = st.slider("Historique (jours)", 5, 365, 60)
     st.caption("Astuce : tape le symbole exact Yahoo Finance.")
 
+def _ensure_close_and_volume(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalise les colonnes 'close' et 'volume' quel que soit le format Yahoo."""
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    cols = {c.lower(): c for c in df.columns}
+
+    # close
+    if "close" in cols:
+        close_series = df[cols["close"]]
+    elif "adj close" in cols:
+        close_series = df[cols["adj close"]]
+    else:
+        # dernier fallback : dernière colonne numérique
+        close_series = df.select_dtypes("number").iloc[:, -1]
+
+    # volume
+    if "volume" in cols:
+        volume_series = df[cols["volume"]]
+    else:
+        volume_series = pd.Series([None] * len(df), index=df.index)
+
+    out = pd.DataFrame({"close": close_series, "volume": volume_series})
+    return out
+
+
 def load_series(ticker, period_days):
     try:
-        # Essai 1 : 1h sur toute la période demandée
+        # Tentative large
         df = yf.download(ticker, period=f"{period_days}d", interval="1h", progress=False)
-        # Si vide (futures, certains tickers), on réduit la fenêtre et le pas
         if df is None or df.empty:
             df = yf.download(ticker, period=f"{min(period_days,30)}d", interval="30m", progress=False)
         if df is None or df.empty:
             df = yf.download(ticker, period=f"{min(period_days,7)}d", interval="15m", progress=False)
         if df is None or df.empty:
             return pd.DataFrame()
-        df = df.rename(columns={"Close":"close","Volume":"volume"})
+
+        # Normalisation des colonnes
+        df = _ensure_close_and_volume(df)
         return df
     except Exception:
         return pd.DataFrame()
+
 
 
 def last_price(ticker):
