@@ -45,20 +45,23 @@ def _ensure_close_and_volume(df: pd.DataFrame) -> pd.DataFrame:
 
 def load_series(ticker, period_days):
     try:
-        # Tentative large
+        # Essai 1 : intervalle 1h
         df = yf.download(ticker, period=f"{period_days}d", interval="1h", progress=False)
+        # Essai 2 : si vide → intervalle 30m (max 30 jours)
         if df is None or df.empty:
             df = yf.download(ticker, period=f"{min(period_days,30)}d", interval="30m", progress=False)
+        # Essai 3 : si encore vide → intervalle 1d (quotidien, plus fiable)
         if df is None or df.empty:
-            df = yf.download(ticker, period=f"{min(period_days,7)}d", interval="15m", progress=False)
+            df = yf.download(ticker, period=f"{period_days}d", interval="1d", progress=False)
+
         if df is None or df.empty:
             return pd.DataFrame()
 
-        # Normalisation des colonnes
         df = _ensure_close_and_volume(df)
         return df
     except Exception:
         return pd.DataFrame()
+
 
 
 
