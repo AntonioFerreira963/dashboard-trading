@@ -11,20 +11,28 @@ st.title("📈 Dashboard rapide — XAUUSD + 2 actions")
 # --- Paramètres par défaut (modifiables dans la barre latérale) ---
 with st.sidebar:
     st.header("⚙️ Paramètres")
-    xau_ticker = st.text_input("Symbole Or (Yahoo)", value="XAUUSD=X")  # alternative: GC=F
-    stock1 = st.text_input("Action 1", value="RIOT")
+    xau_ticker = st.text_input("Symbole Or (Yahoo)", value="GC=F")  # alternative: GC=F
+    stock1 = st.text_input("Action 1", value="BABA")
     stock2 = st.text_input("Action 2", value="NVDA")
     days = st.slider("Historique (jours)", 5, 365, 60)
     st.caption("Astuce : tape le symbole exact Yahoo Finance.")
 
 def load_series(ticker, period_days):
-    end = datetime.utcnow()
-    start = end - timedelta(days=period_days)
-    df = yf.download(ticker, start=start, end=end, progress=False, interval="1h")
-    if df is None or df.empty:
+    try:
+        # Essai 1 : 1h sur toute la période demandée
+        df = yf.download(ticker, period=f"{period_days}d", interval="1h", progress=False)
+        # Si vide (futures, certains tickers), on réduit la fenêtre et le pas
+        if df is None or df.empty:
+            df = yf.download(ticker, period=f"{min(period_days,30)}d", interval="30m", progress=False)
+        if df is None or df.empty:
+            df = yf.download(ticker, period=f"{min(period_days,7)}d", interval="15m", progress=False)
+        if df is None or df.empty:
+            return pd.DataFrame()
+        df = df.rename(columns={"Close":"close","Volume":"volume"})
+        return df
+    except Exception:
         return pd.DataFrame()
-    df = df.rename(columns={"Close":"close","Volume":"volume"})
-    return df
+
 
 def last_price(ticker):
     data = yf.Ticker(ticker).history(period="1d", interval="1m")
