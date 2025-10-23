@@ -42,6 +42,16 @@ def _ensure_close_and_volume(df: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame({"close": close_series, "volume": volume_series})
     return out
 
+def _pick_period_interval(days:int):
+    # Choisit un couple (period, interval) compatible Yahoo
+    if days <= 7:
+        return ("7d", "15m")
+    elif days <= 30:
+        return (f"{days}d", "30m")
+    elif days <= 90:
+        return (f"{days}d", "60m")
+    else:
+        return (f"{days}d", "1d")  # au-delà de 90 j, on passe en quotidien
 
 def load_series(ticker, period_days):
     try:
