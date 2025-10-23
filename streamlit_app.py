@@ -1,10 +1,19 @@
-# streamlit_app.py — V5 Robot (lisible 4 colonnes + tableaux clairs)
+# streamlit_app.py — V5.2 Robot lisible (SL affiché + définitions claires)
 import streamlit as st
 import yfinance as yf
 import pandas as pd
 
 st.set_page_config(page_title="Robot Trading – 4 colonnes", layout="wide")
 st.title("🤖 Robot Trading — Signaux automatiques (RSI / MACD / EMA)")
+
+with st.expander("ℹ️ Règles des signaux (cliquer pour voir)", expanded=False):
+    st.markdown("""
+**ACHAT** : RSI < 30 **ou** croisement MACD haussier (passe <0 → >0).  
+**SHORT** : RSI > 70 **ou** croisement MACD baissier (passe >0 → <0).  
+**CASSURE+** : Prix > EMA20 > EMA50 **et** passage **au-dessus** de l’EMA20 aujourd’hui.  
+**CASSURE-** : Prix < EMA20 < EMA50 **et** passage **en-dessous** de l’EMA20 aujourd’hui.  
+TP/SL auto = calculs indicatifs basés sur une volatilité simple (pas des conseils).
+""")
 
 # ============
 #   SIDEBAR
@@ -21,7 +30,7 @@ with st.sidebar:
     st.caption("Astuce : si pas de graphe, essaie 30 jours ou 7 jours.")
 
 # =====================
-#  HELPERS & CACHING
+#  HELPERS
 # =====================
 def _pick_period_interval(days: int):
     if days <= 7: return ("7d", "15m")
@@ -32,11 +41,13 @@ def _pick_period_interval(days: int):
 def _ensure_close_volume(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty: return pd.DataFrame()
     low = {c.lower(): c for c in df.columns}
-    close = df[low["close"]] if "close" in low else df.select_dtypes("number").iloc[:, -1]
+    close = df[low["close"]] if "close" in low else (
+        df[low["adj close"]] if "adj close" in low else df.select_dtypes("number").iloc[:, -1]
+    )
     volume = df[low["volume"]] if "volume" in low else pd.Series([None]*len(df), index=df.index)
     return pd.DataFrame({"close": close, "volume": volume}).dropna(subset=["close"])
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=300, show_spinner=False)
 def load_series(ticker: str, period_days: int) -> pd.DataFrame:
     try:
         period, interval = _pick_period_interval(period_days)
@@ -55,82 +66,98 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     loss = (-delta.clip(upper=0)).rolling(14).mean()
     rs = gain / loss
     df["RSI"] = 100 - (100 / (1 + rs))
-    df["EMA20"] = df["close"].ewm(span=20).mean()
-    df["EMA50"] = df["close"].ewm(span=50).mean()
-    ema12 = df["close"].ewm(span=12).mean()
-    ema26 = df["close"].ewm(span=26).mean()
+    df["EMA20"] = df["close"].ewm(span=20, adjust=False).mean()
+    df["EMA50"] = df["close"].ewm(span=50, adjust=False).mean()
+    ema12 = df["close"].ewm(span=12, adjust=False).mean()
+    ema26 = df["close"].ewm(span=26, adjust=False).mean()
     df["MACD"] = ema12 - ema26
-    df["MACDsig"] = df["MACD"].ewm(span=9).mean()
     return df
+
+def _cross_today(price_prev, ema20_prev, price_now, ema20_now, direction="+"):
+    if any(pd.isna(x) for x in [price_prev, ema20_prev, price_now, ema20_now]): return False
+    if direction == "+":
+        return price_prev < ema20_prev and price_now > ema20_now
+    return price_prev > ema20_prev and price_now < ema20_now
 
 def classify_signal(row_now, row_prev):
     p  = float(row_now["close"])
     rsi = float(row_now["RSI"])
-    ema20, ema50 = row_now["EMA20"], row_now["EMA50"]
-    macd_now, macd_prev = row_now["MACD"], row_prev["MACD"]
-    # règles
-    if rsi < 30 or (macd_prev < 0 and macd_now > 0):
-        return "ACHAT", f"RSI {rsi:.1f} / MACD↑"
-    if rsi > 70 or (macd_prev > 0 and macd_now < 0):
-        return "SHORT", f"RSI {rsi:.1f} / MACD↓"
-    if p > ema20 > ema50: return "CASSURE+", "Cassure haussière EMA20/50"
-    if p < ema20 < ema50: return "CASSURE-", "Cassure baissière EMA20/50"
+    ema20_now, ema50_now = float(row_now["EMA20"]), float(row_now["EMA50"])
+    macd_now, macd_prev = float(row_now["MACD"]), float(row_prev["MACD"])
+    cross_up = macd_prev < 0 and macd_now > 0
+    cross_dn = macd_prev > 0 and macd_now < 0
+
+    cross_above = _cross_today(row_prev["close"], row_prev["EMA20"], row_now["close"], row_now["EMA20"], "+")
+    cross_below = _cross_today(row_prev["close"], row_prev["EMA20"], row_now["close"], row_now["EMA20"], "-")
+
+    if rsi < 30 or cross_up:
+        return "ACHAT", f"RSI {rsi:.1f} ou MACD↑"
+    if rsi > 70 or cross_dn:
+        return "SHORT", f"RSI {rsi:.1f} ou MACD↓"
+    if (p > ema20_now > ema50_now) and cross_above:
+        return "CASSURE+", "Prix>EMA20>EMA50 (cassure au-dessus EMA20)"
+    if (p < ema20_now < ema50_now) and cross_below:
+        return "CASSURE-", "Prix<EMA20<EMA50 (cassure sous EMA20)"
     return "ATTENTE", "Neutre"
 
 def calc_tp_sl(price, pct=0.02):
-    return price*(1+pct), price*(1-pct/1.3)
+    tp = price * (1 + pct)
+    sl = price * (1 - pct/1.3)
+    return round(tp,2), round(sl,2)
 
 # =========================
-#   SCAN & CLASSIFICATION
+#   SCAN & TABLES
 # =========================
 tickers = [t.strip() for t in tickers_text.split(",") if t.strip()]
 rows = []
 for t in tickers:
     df = load_series(t, days)
-    if df.empty or len(df)<50: 
-        rows.append({"Ticker":t,"Signal":"N/A"}); continue
+    if df.empty or len(df) < 50:
+        rows.append({"Ticker": t, "Prix": None, "RSI": None, "Signal": "N/A", "Raison": "Pas de données", "TP": None, "SL": None})
+        continue
     df = add_indicators(df).dropna()
     row_now, row_prev = df.iloc[-1], df.iloc[-2]
     sig, reason = classify_signal(row_now, row_prev)
-    tp, sl = calc_tp_sl(row_now["close"])
+    tp, sl = calc_tp_sl(float(row_now["close"]))
     rows.append({
-        "Ticker":t, "Prix":round(row_now["close"],2),
-        "RSI":round(row_now["RSI"],1),
-        "Signal":sig, "Raison":reason,
-        "TP":round(tp,2), "SL":round(sl,2)
+        "Ticker": t, "Prix": round(float(row_now["close"]),2),
+        "RSI": round(float(row_now["RSI"]),1),
+        "Signal": sig, "Raison": reason, "TP": tp, "SL": sl
     })
-
 df_res = pd.DataFrame(rows)
 
-# ==============================
-#   TABLEAU 4 COLONNES
-# ==============================
 st.subheader("📋 Signaux — Vue Robot")
 
-col1,col2,col3,col4 = st.columns(4)
-def show(col,label,emoji):
-    subset = df_res[df_res["Signal"]==label][["Ticker","Prix","RSI","TP","SL","Raison"]]
+col1, col2, col3, col4 = st.columns(4)
+def show_bucket(col, label, emoji):
+    subset = df_res[df_res["Signal"] == label][["Ticker","Prix","RSI","TP","SL","Raison"]]
     col.markdown(f"### {emoji} {label}")
     if subset.empty: col.write("—")
-    else: col.dataframe(subset, use_container_width=True)
+    else: col.dataframe(subset.reset_index(drop=True), use_container_width=True)
 
-show(col1,"ACHAT","✅")
-show(col2,"SHORT","🚨")
-show(col3,"CASSURE+","📈")
-show(col4,"CASSURE-","📉")
+show_bucket(col1, "ACHAT", "✅")
+show_bucket(col2, "SHORT", "🚨")
+show_bucket(col3, "CASSURE+", "📈")
+show_bucket(col4, "CASSURE-", "📉")
+
+st.caption("Signaux basés sur RSI, MACD et structure EMA20/EMA50. **TP/SL auto** = indicatif.")
 
 # ==============================
-#   GRAPHES
+#   GRAPHES (bas de page)
 # ==============================
 if show_charts:
-    st.divider(); st.subheader("📊 Graphiques (top 6 tickers)")
-    for i in range(0,len(tickers[:6]),3):
+    st.divider()
+    st.subheader("📊 Graphiques (top 6 tickers)")
+    to_plot = tickers[:6]
+    for i in range(0, len(to_plot), 3):
         cols = st.columns(3)
-        for j,t in enumerate(tickers[i:i+3]):
+        for j, t in enumerate(to_plot[i:i+3]):
             with cols[j]:
-                df = load_series(t,days)
-                if df.empty: st.write(f"{t}: pas de données"); continue
-                df = add_indicators(df)
+                ddf = load_series(t, days)
+                if ddf.empty:
+                    st.write(f"{t} : pas de données"); continue
+                ddf = add_indicators(ddf)
                 st.markdown(f"**{t}**")
-                st.line_chart(df[["close"]])
-                st.caption(f"RSI(14) : {df['RSI'].iloc[-1]:.1f}")
+                st.line_chart(ddf[["close"]])
+                if "RSI" in ddf and ddf["RSI"].notna().any():
+                    st.caption(f"RSI(14) : {ddf['RSI'].dropna().iloc[-1]:.1f}")
