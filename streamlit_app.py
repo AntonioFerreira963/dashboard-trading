@@ -89,3 +89,4 @@ with colB: chart_block("Action 1", stock1)
 with colC: chart_block("Action 2", stock2)
 
 st.caption("⚠️ Indicateurs simplifiés à but informatif.")
+
