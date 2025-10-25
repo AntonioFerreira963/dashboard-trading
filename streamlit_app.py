@@ -1,310 +1,265 @@
-# streamlit_app.py — V7.2 (Lisibilité ++, contrastes forts, cartes propres)
+# streamlit_app.py — V8 (Style Excel, multi-timeframes RSI/MACD)
 import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
 import altair as alt
-from datetime import datetime
+from datetime import datetime, timezone
 
-# =========================
-#   CONFIG & THEME
-# =========================
-st.set_page_config(page_title="Robot Trading — V7.2", layout="wide", page_icon="🤖")
+st.set_page_config(page_title="Robot Trading — V8", layout="wide", page_icon="📊")
 
-# ---- UI Controls (avant CSS pour agir sur la taille globale)
-with st.sidebar:
-    st.header("⚙️ Paramètres")
-    ui_scale = st.slider("Taille de l’interface", 90, 120, 100, help="Zoom de l’UI (en %)")
-    compact = st.toggle("Mode compact (tables denses)", value=True)
-    st.divider()
-
-# ---- CSS haute lisibilité
-st.markdown(f"""
+# ============ THEME LISIBLE ============
+st.markdown("""
 <style>
-html {{ zoom: {ui_scale/100}; }}
-:root {{
-  --bg:#0b0f1a;        /* fond app */
-  --panel:#0f1629;     /* panneaux */
-  --panel2:#131c34;    /* surcouche */
-  --txt:#e6edf3;       /* texte clair */
-  --muted:#a2b0c6;     /* texte secondaire */
-  --grid:#23304f;      /* bordures */
-  --buy:#10c77b;       /* vert achat */
-  --sell:#ff4d4f;      /* rouge short */
-  --plus:#8b5cf6;      /* violet cassure+ */
-  --minus:#eab308;     /* jaune cassure- */
-  --wait:#94a3b8;      /* gris attente */
-}}
-html, body, [data-testid="stAppViewContainer"] {{ background: var(--bg) !important; color: var(--txt); }}
-section[data-testid="stSidebar"] {{ background: linear-gradient(180deg,#0b1222,#0b0f1a); color: var(--txt); }}
-.block-container{{padding-top:1.0rem; padding-bottom:2rem; }}
-h1,h2,h3,h4{{ color: var(--txt); }}
-.small {{ color: var(--muted); font-size:.88rem }}
-.card {{
-  background: var(--panel);
-  border:1px solid var(--grid);
-  border-radius:16px; padding:14px 16px;
-  box-shadow: 0 6px 20px rgba(0,0,0,.35);
-}}
-.kpi {{
-  background: var(--panel2);
-  border:1px solid var(--grid);
-  border-radius:14px; padding:10px 12px; text-align:center;
-}}
-.kpi .v{{ font-size:1.35rem; font-weight:800; color:#fff; }}
-.kpi .l{{ font-size:.82rem; color:var(--muted); }}
-.head {{
-  padding:10px 12px; color:#fff; font-weight:700; border-radius:12px 12px 0 0;
-}}
-.head-buy  {{ background: linear-gradient(90deg, rgba(16,199,123,.95), rgba(16,199,123,.45)); }}
-.head-sell {{ background: linear-gradient(90deg, rgba(255,77,79,.95), rgba(255,77,79,.45)); }}
-.head-plus {{ background: linear-gradient(90deg, rgba(139,92,246,.95), rgba(139,92,246,.45)); }}
-.head-minus{{ background: linear-gradient(90deg, rgba(234,179,8,.95), rgba(234,179,8,.45)); }}
-.tbl {{ border-left:1px solid var(--grid); border-right:1px solid var(--grid); border-bottom:1px solid var(--grid);
-        border-radius:0 0 12px 12px; padding:6px; background: #0f1527; }}
-.badge {{
-  display:inline-block; padding:.28rem .6rem; border-radius:999px; font-weight:700; border:1px solid rgba(255,255,255,.18)
-}}
-.badge-buy  {{ background:rgba(16,199,123,.18); color:var(--buy);  }}
-.badge-sell {{ background:rgba(255,77,79,.18); color:var(--sell); }}
-.badge-plus {{ background:rgba(139,92,246,.18); color:var(--plus); }}
-.badge-minus{{ background:rgba(234,179,8,.18);  color:var(--minus);}}
-.badge-wait {{ background:rgba(148,163,184,.18); color:var(--wait); }}
-/* Densité tableau */
-[data-testid="stDataFrame"] div[role="row"] div[role="gridcell"] {{
-  padding: {'.25rem .35rem' if compact else '.5rem .6rem'} !important;
-}}
+:root{
+  --bg:#0b0f1a; --panel:#111a2e; --grid:#243557; --txt:#f1f5f9; --mut:#94a3b8;
+  --buy:#10c77b; --sell:#ff4d4f; --wait:#a0aec0; --head:#1a2746; --kpi:#0f1629;
+}
+html,body,[data-testid="stAppViewContainer"]{background:var(--bg)!important;color:var(--txt)!important;}
+section[data-testid="stSidebar"]{background:linear-gradient(180deg,#0d1428,#0b0f1a);}
+.block-container{padding-top:1rem;padding-bottom:2rem;}
+h1,h2,h3{color:#e6edf3}
+.card{background:var(--panel);border:1px solid var(--grid);border-radius:14px;overflow:hidden}
+.card-header{background:var(--head);padding:10px 14px;display:flex;gap:12px;align-items:center}
+.tag{padding:.15rem .55rem;border-radius:999px;font-weight:700;border:1px solid rgba(255,255,255,.15)}
+.tag-buy{color:var(--buy);background:rgba(16,199,123,.14)}
+.tag-sell{color:var(--sell);background:rgba(255,77,79,.14)}
+.tag-wait{color:var(--wait);background:rgba(160,174,192,.14)}
+.grid{display:grid;grid-template-columns:1.1fr .9fr 1.2fr;gap:12px;padding:14px}
+.box{background:var(--kpi);border:1px solid var(--grid);border-radius:12px;padding:10px}
+.small{color:var(--mut);font-size:.88rem}
+.tbl td,.tbl th{border:1px solid var(--grid);padding:6px 10px}
+.tbl{border-collapse:collapse;width:100%;font-size:.92rem}
+.th-center th{text-align:center}
+.center{text-align:center}
+.kpi-val{font-weight:800;font-size:1.3rem}
+.sep{height:8px}
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🤖 Robot Trading — RSI / MACD / EMA (V7.2)")
+st.title("📊 Robot Trading — V8 (Achat / Vente / Attente par timeframe)")
 
-with st.expander("ℹ️ Règles des signaux (rapide)", expanded=False):
-    st.markdown("""
-**ACHAT** : RSI < 30 **ou** MACD croise haussier.  
-**SHORT** : RSI > 70 **ou** MACD croise baissier.  
-**CASSURE+** : Prix > EMA20 > EMA50 **ET** franchit EMA20 aujourd’hui.  
-**CASSURE-** : Prix < EMA20 < EMA50 **ET** casse EMA20 aujourd’hui.  
-**TP1/TP2/SL** : basés sur **ATR(14)** → TP1 ≈ 0.75×ATR, TP2 ≈ 1.5×ATR, SL serré ≈ 0.8×ATR.
-""")
-
-# =========================
-#   SIDEBAR (suite)
-# =========================
+# ============ SIDEBAR ============
 with st.sidebar:
+    st.subheader("⚙️ Paramètres")
     default_watchlist = ["GC=F","NVDA","BABA","QQQ","IREN","BYND"]
-    selection = st.multiselect("Watchlist (Yahoo)", sorted(set(default_watchlist)), default_watchlist)
+    selection = st.multiselect("Watchlist (Yahoo)", sorted(set(default_watchlist)),
+                               default=default_watchlist)
     new_tkr = st.text_input("➕ Ajouter un ticker (Yahoo)")
     if new_tkr:
         selection = list(dict.fromkeys(selection + [new_tkr.strip().upper()]))
 
-    days = st.slider("Historique (jours)", 5, 365, 30)
-    view_mode = st.radio("Affichage", ["Vue Robot", "Vue Cartes"], horizontal=True)
-    show_charts = st.checkbox("Mini-graph sous chaque carte", value=True)
-    st.caption("Astuce : 7–30 jours = réactif.")
+    spark_days = st.slider("Historique sparkline (jours)", 5, 90, 30)
+    st.caption("Conseil : 30 jours = bonne lisibilité.")
 
-# =========================
-#   HELPERS
-# =========================
-def _pick_period_interval(days:int):
-    if days <= 7:   return ("7d", "15m")
-    if days <= 30:  return (f"{days}d", "30m")
-    if days <= 90:  return (f"{days}d", "60m")
-    return (f"{days}d", "1d")
+# ============ HELPERS ============
+def rsi(series: pd.Series, period: int = 14) -> pd.Series:
+    delta = series.diff()
+    up, down = delta.clip(lower=0), -delta.clip(upper=0)
+    roll_up = up.rolling(period).mean()
+    roll_down = down.rolling(period).mean()
+    rs = roll_up / roll_down
+    return 100 - (100 / (1 + rs))
+
+def macd(series: pd.Series, f=12, s=26) -> pd.Series:
+    ema_f = series.ewm(span=f, adjust=False).mean()
+    ema_s = series.ewm(span=s, adjust=False).mean()
+    return ema_f - ema_s
+
+def pick_period_interval(tf: str):
+    # Map timeframes to (period, interval) for Yahoo Finance
+    if tf == "1m":   return ("1d", "1m")   # 1 day of 1m data
+    if tf == "15m":  return ("7d", "15m")
+    if tf == "1H":   return ("30d", "60m")
+    if tf == "4H":   return ("60d", "240m")
+    if tf == "1D":   return ("1y", "1d")
+    raise ValueError("tf inconnu")
 
 @st.cache_data(ttl=180, show_spinner=False)
-def load_ohlcv(ticker:str, period_days:int) -> pd.DataFrame:
-    period, interval = _pick_period_interval(period_days)
+def load_tf(ticker: str, tf: str) -> pd.DataFrame:
+    period, interval = pick_period_interval(tf)
     tk = yf.Ticker(ticker)
     df = tk.history(period=period, interval=interval, prepost=True, actions=False, auto_adjust=False)
     if df is None or df.empty:
-        df = tk.history(period=f"{period_days}d", interval="1d", prepost=True, actions=False, auto_adjust=False)
-    if df is None or df.empty: return pd.DataFrame()
+        return pd.DataFrame()
     df = df.rename(columns=str.title)
-    keep = [c for c in ["Open","High","Low","Close","Volume"] if c in df.columns]
-    return df[keep].dropna()
-
-def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty: return df.copy()
-    out = df.copy()
-
-    # RSI(14)
-    delta = out["Close"].diff()
-    gain = np.where(delta>0, delta, 0.0)
-    loss = np.where(delta<0, -delta, 0.0)
-    roll_up = pd.Series(gain, index=out.index).rolling(14).mean()
-    roll_down = pd.Series(loss, index=out.index).rolling(14).mean()
-    rs = roll_up / roll_down
-    out["RSI"] = 100 - (100/(1+rs))
-
-    # EMA
-    out["EMA20"] = out["Close"].ewm(span=20, adjust=False).mean()
-    out["EMA50"] = out["Close"].ewm(span=50, adjust=False).mean()
-
-    # MACD
-    ema12 = out["Close"].ewm(span=12, adjust=False).mean()
-    ema26 = out["Close"].ewm(span=26, adjust=False).mean()
-    out["MACD"] = ema12 - ema26
-
-    # ATR(14)
-    high_low = out["High"] - out["Low"]
-    high_close = (out["High"] - out["Close"].shift()).abs()
-    low_close  = (out["Low"]  - out["Close"].shift()).abs()
-    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
-    out["ATR"] = tr.rolling(14).mean()
+    if "Close" not in df.columns: return pd.DataFrame()
+    out = df[["Open","High","Low","Close","Volume"]].copy()
+    out["RSI"] = rsi(out["Close"]).round(1)
+    out["MACD"] = macd(out["Close"]).round(6)
     return out.dropna()
 
-def _cross_today(prev_val, prev_ref, now_val, now_ref, up=True):
-    if any(pd.isna(x) for x in [prev_val, prev_ref, now_val, now_ref]): return False
-    return (prev_val < prev_ref and now_val > now_ref) if up else (prev_val > prev_ref and now_val < now_ref)
-
-def classify_signal(dfi: pd.DataFrame):
-    row_now, row_prev = dfi.iloc[-1], dfi.iloc[-2]
-    p = float(row_now["Close"])
-    rsi = float(row_now["RSI"])
-    macd_now, macd_prev = float(row_now["MACD"]), float(row_prev["MACD"])
-    ema20_now, ema50_now = float(row_now["EMA20"]), float(row_now["EMA50"])
-    cross_up   = (macd_prev < 0 and macd_now > 0)
+def classify_signal(df: pd.DataFrame) -> str:
+    """Renvoie 'ACHAT' / 'VENTE' / 'ATTENTE' selon RSI & MACD (croisement)."""
+    if df.empty or len(df) < 3: return "ATTENTE"
+    rsi_now = float(df["RSI"].iloc[-1])
+    macd_now, macd_prev = float(df["MACD"].iloc[-1]), float(df["MACD"].iloc[-2])
+    cross_up = (macd_prev < 0 and macd_now > 0)
     cross_down = (macd_prev > 0 and macd_now < 0)
-    cross_above= _cross_today(row_prev["Close"], row_prev["EMA20"], row_now["Close"], row_now["EMA20"], True)
-    cross_below= _cross_today(row_prev["Close"], row_prev["EMA20"], row_now["Close"], row_now["EMA20"], False)
 
-    if (rsi < 30) or cross_up:
-        return "ACHAT", f"RSI {rsi:.1f} ou MACD↑", p
-    if (rsi > 70) or cross_down:
-        return "SHORT", f"RSI {rsi:.1f} ou MACD↓", p
-    if (p > ema20_now > ema50_now) and cross_above:
-        return "CASSURE+", "Prix>EMA20>EMA50 (cassure EMA20↑)", p
-    if (p < ema20_now < ema50_now) and cross_below:
-        return "CASSURE-", "Prix<EMA20<EMA50 (cassure EMA20↓)", p
-    return "ATTENTE", "Neutre", p
+    if rsi_now < 30 or cross_up:
+        return "ACHAT"
+    if rsi_now > 70 or cross_down:
+        return "VENTE"
+    return "ATTENTE"
 
-def tp_sl_from_atr(side:str, price:float, atr:float):
-    if np.isnan(atr) or atr <= 0: atr = max(price*0.008, 0.3)
-    mult = {"TP1":0.75, "TP2":1.50, "SL":0.80}
-    if side == "SHORT":
-        tp1, tp2, sl = price - mult["TP1"]*atr, price - mult["TP2"]*atr, price + mult["SL"]*atr
-    else:
-        tp1, tp2, sl = price + mult["TP1"]*atr, price + mult["TP2"]*atr, price - mult["SL"]*atr
-    return round(tp1,2), round(tp2,2), round(sl,2)
+def trend_label(pct: float) -> str:
+    if pct > 0.2:  return "Haussière"
+    if pct < -0.2: return "Baissière"
+    return "Neutre"
 
-def color_meta(label:str):
-    meta = {
-        "ACHAT": ("Achat","head-buy","badge-buy"),
-        "SHORT": ("Short","head-sell","badge-sell"),
-        "CASSURE+": ("Cassure+","head-plus","badge-plus"),
-        "CASSURE-": ("Cassure-","head-minus","badge-minus"),
-        "ATTENTE": ("Attente","head-wait","badge-wait")
-    }
-    return meta[label]
+def tag_class(label: str) -> str:
+    return {"ACHAT":"tag-buy","VENTE":"tag-sell","ATTENTE":"tag-wait"}.get(label,"tag-wait")
 
-# =========================
-#   SCAN
-# =========================
-tickers = selection or ["GC=F","NVDA","BABA","QQQ","IREN","BYND"]
-rows = []
-for t in tickers:
-    df = load_ohlcv(t, days)
-    if df.empty or len(df) < 50:
-        rows.append({"Ticker":t,"Prix":None,"RSI":None,"Signal":"ATTENTE","Raison":"Pas assez de données",
-                     "TP1":None,"TP2":None,"SL":None,"ATR":None,"Data":df})
-        continue
-    dfi = add_indicators(df)
-    label, reason, price = classify_signal(dfi)
-    atr = float(dfi["ATR"].iloc[-1])
-    side = "SHORT" if label=="SHORT" else "ACHAT"
-    tp1, tp2, sl = tp_sl_from_atr(side, price, atr)
-    rows.append({"Ticker":t,"Prix":round(price,2),"RSI":round(float(dfi['RSI'].iloc[-1]),1),
-                 "Signal":label,"Raison":reason,"TP1":tp1,"TP2":tp2,"SL":sl,"ATR":round(atr,2),"Data":dfi})
+@st.cache_data(ttl=180, show_spinner=False)
+def load_spark(ticker: str, days: int) -> pd.DataFrame:
+    tk = yf.Ticker(ticker)
+    # adapt interval for spark
+    if days <= 7:   df = tk.history(period="7d", interval="30m", prepost=True)
+    elif days <= 30:df = tk.history(period="30d", interval="1d", prepost=True)
+    else:           df = tk.history(period="90d", interval="1d", prepost=True)
+    if df is None or df.empty: return pd.DataFrame()
+    return df.rename(columns=str.title)[["Close"]].dropna().reset_index()
 
-df_all = pd.DataFrame(rows)
+def expert_opinion(signals: dict) -> str:
+    # Regarde surtout 4H et 1D
+    score = 0
+    weight = {"1m":1, "15m":1, "1H":2, "4H":3, "1D":4}
+    for tf, sig in signals.items():
+        if sig == "ACHAT":  score += weight[tf]
+        elif sig == "VENTE":score -= weight[tf]
+    if score >= 3:  return "BUY"
+    if score <= -3: return "SELL"
+    return "NEUTRE"
 
-# =========================
-#   HEADER DIRECTION
-# =========================
-nb_buy  = int((df_all["Signal"]=="ACHAT").sum())
-nb_sell = int((df_all["Signal"]=="SHORT").sum())
-direction = "BUY" if nb_buy>nb_sell else "SELL" if nb_sell>nb_buy else "NEUTRE"
-badge = "badge-buy" if direction=="BUY" else "badge-sell" if direction=="SELL" else "badge-wait"
+def forecast_text(signals: dict) -> str:
+    # Prévision = biais 4H/1D
+    major = [signals.get("4H","ATTENTE"), signals.get("1D","ATTENTE")]
+    if major.count("ACHAT") >= 1 and "VENTE" not in major: return "Haussière"
+    if major.count("VENTE") >= 1 and "ACHAT" not in major: return "Baissière"
+    return "Neutre"
 
-cA,cB,cC,cD,cE = st.columns([1.4,1,1,1,1.2])
-with cA:
-    st.markdown(f"""
-    <div class="card">
-      <span class="{badge}">📊 Direction : <b>{direction}</b></span>
-      <div class="small">Mise à jour : {datetime.utcnow().strftime("%H:%M UTC (%d-%m)")}</div>
-    </div>""", unsafe_allow_html=True)
-with cB: st.markdown(f'<div class="kpi"><div class="v">{len(df_all)}</div><div class="l">Tickers</div></div>', unsafe_allow_html=True)
-with cC: st.markdown(f'<div class="kpi"><div class="v">{nb_buy}</div><div class="l">Achat</div></div>', unsafe_allow_html=True)
-with cD: st.markdown(f'<div class="kpi"><div class="v">{nb_sell}</div><div class="l">Short</div></div>', unsafe_allow_html=True)
-with cE:
-    nb_plus = int((df_all["Signal"]=="CASSURE+").sum())
-    nb_minus= int((df_all["Signal"]=="CASSURE-").sum())
-    st.markdown(f'<div class="kpi"><div class="v">{nb_plus}/{nb_minus}</div><div class="l">Cassure + / -</div></div>', unsafe_allow_html=True)
+# ============ RENDU PAR ACTIF ============
+def render_asset(ticker: str):
+    # Données snapshot pour le bandeau
+    day_df = load_tf(ticker, "1D")
+    if day_df.empty:
+        st.warning(f"{ticker} : données indisponibles")
+        return
+    price = float(day_df["Close"].iloc[-1])
+    prev = float(day_df["Close"].iloc[-2]) if len(day_df) > 1 else price
+    pct = round((price - prev) / prev * 100, 2) if prev else 0.0
 
-st.markdown("### 🗂️ Signaux — Vue Robot" if view_mode=="Vue Robot" else "### 🗂️ Vue Cartes (par action)")
+    # Signals par timeframe
+    tfs = ["1m","15m","1H","4H","1D"]
+    sigs = {}
+    for tf in tfs:
+        df_tf = load_tf(ticker, tf)
+        sigs[tf] = classify_signal(df_tf)
 
-# =========================
-#   AFFICHAGE
-# =========================
-def table_for(label:str):
-    sub = df_all[df_all["Signal"]==label][["Ticker","Prix","RSI","TP1","TP2","SL","Raison","ATR"]]
-    if sub.empty:
-        st.write("—"); return
-    st.dataframe(
-        sub.reset_index(drop=True),
-        use_container_width=True, hide_index=True,
-        column_config={
-            "Ticker": st.column_config.TextColumn("Ticker", width="small"),
-            "Prix":   st.column_config.NumberColumn("Prix", format="%.2f", width="small"),
-            "RSI":    st.column_config.NumberColumn("RSI", format="%.1f", width="small"),
-            "TP1":    st.column_config.NumberColumn("TP1", format="%.2f", width="small"),
-            "TP2":    st.column_config.NumberColumn("TP2", format="%.2f", width="small"),
-            "SL":     st.column_config.NumberColumn("SL",  format="%.2f", width="small"),
-            "ATR":    st.column_config.NumberColumn("ATR", format="%.2f", width="small"),
-            "Raison": st.column_config.TextColumn("Raison", width="medium"),
-        }
+    # Tendance globale = 1D variation
+    tendance = trend_label(pct)
+    now = datetime.now(timezone.utc).strftime("%d/%m/%Y %H:%M UTC")
+
+    # Header
+    main_tag = {"ACHAT":"Achat","VENTE":"Vente","ATTENTE":"Attente"}[
+        expert_opinion(sigs).replace("BUY","ACHAT").replace("SELL","VENTE")
+    ]
+    st.markdown(
+        f"""
+        <div class="card">
+          <div class="card-header">
+            <div style="font-size:1.05rem;font-weight:800">{ticker}</div>
+            <span class="tag">{tendance}</span>
+            <div class="small"> {now} </div>
+            <span class="tag {tag_class(sigs['15m'])}">15m : {sigs['15m']}</span>
+            <span class="tag {tag_class(sigs['1D'])}">1D : {sigs['1D']}</span>
+          </div>
+          <div class="grid">
+        """,
+        unsafe_allow_html=True
     )
 
-if view_mode == "Vue Robot":
-    c1,c2,c3,c4 = st.columns(4)
+    # Col 1 — Prix & variation + sparkline
+    with st.container():
+        col1, col2, col3 = st.columns([1.1, .9, 1.2])
+        with col1:
+            st.markdown('<div class="box">', unsafe_allow_html=True)
+            st.markdown(f"<div class='small'>Cours actuel</div><div class='kpi-val'>{price:.2f}</div>", unsafe_allow_html=True)
+            colA, colB = st.columns(2)
+            with colA:
+                st.markdown("<div class='small'>Variation (1D)</div>", unsafe_allow_html=True)
+                col_color = "var(--buy)" if pct>=0 else "var(--sell)"
+                st.markdown(f"<div style='color:{col_color};font-weight:700'>{pct:.2f}%</div>", unsafe_allow_html=True)
+            with colB:
+                st.markdown("<div class='small'>Tendance</div>", unsafe_allow_html=True)
+                st.markdown(f"<div>{tendance}</div>", unsafe_allow_html=True)
 
-    def bucket(col, title, head_cls, label):
-        with col:
-            st.markdown(f'<div class="head {head_cls}">{title}</div>', unsafe_allow_html=True)
-            st.markdown('<div class="tbl">', unsafe_allow_html=True)
-            table_for(label)
+            # sparkline
+            spark = load_spark(ticker, spark_days)
+            if not spark.empty:
+                ch = alt.Chart(spark).mark_line().encode(
+                    x=alt.X('Date:T', axis=alt.Axis(labels=False, ticks=False, title=None)),
+                    y=alt.Y('Close:Q', axis=alt.Axis(labels=False, ticks=False, title=None))
+                ).properties(height=90)
+                st.altair_chart(ch, use_container_width=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
-    bucket(c1, "✅ Achat",   "head-buy",  "ACHAT")
-    bucket(c2, "🚨 Short",   "head-sell", "SHORT")
-    bucket(c3, "📈 Cassure+", "head-plus", "CASSURE+")
-    bucket(c4, "📉 Cassure-", "head-minus","CASSURE-")
+        # Col 2 — Tableau multi-timeframes
+        with col2:
+            st.markdown('<div class="box">', unsafe_allow_html=True)
+            st.markdown("<div class='small' style='margin-bottom:6px'>ACHAT / VENTE / ATTENTE</div>", unsafe_allow_html=True)
+            tdata = pd.DataFrame({
+                "Timeframe": ["1m","15m","1H","4H","1D"],
+                "Signal": [sigs["1m"],sigs["15m"],sigs["1H"],sigs["4H"],sigs["1D"]],
+            })
+            def color_map(v):
+                if v=="ACHAT": return f"<span style='color:var(--buy);font-weight:700'>{v}</span>"
+                if v=="VENTE": return f"<span style='color:var(--sell);font-weight:700'>{v}</span>"
+                return f"<span style='color:var(--wait);font-weight:700'>{v}</span>"
+            tdata["Signal"] = tdata["Signal"].map(color_map)
+            html = (
+                "<table class='tbl th-center'>"
+                "<tr><th>TF</th><th>Signal</th></tr>"
+                + "".join([f"<tr class='center'><td>{row.Timeframe}</td><td>{row.Signal}</td></tr>"
+                           for row in tdata.itertuples()])
+                + "</table>"
+            )
+            st.markdown(html, unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
 
-    with st.expander("👀 Liste complète (inclut ATTENTE)"):
-        st.dataframe(df_all.drop(columns=["Data"]).reset_index(drop=True),
-                     use_container_width=True, hide_index=True)
+        # Col 3 — Prévision & Avis experts (agrégation)
+        with col3:
+            st.markdown('<div class="box">', unsafe_allow_html=True)
+            prev_txt = forecast_text(sigs)
+            avis = expert_opinion(sigs)
+            colC1, colC2 = st.columns(2)
+            with colC1:
+                st.markdown("<div class='small'>Prévision</div>", unsafe_allow_html=True)
+                color = "var(--buy)" if prev_txt=="Haussière" else "var(--sell)" if prev_txt=="Baissière" else "var(--wait)"
+                st.markdown(f"<div style='font-weight:800;color:{color}'>{prev_txt}</div>", unsafe_allow_html=True)
+            with colC2:
+                st.markdown("<div class='small'>Avis experts</div>", unsafe_allow_html=True)
+                color = "var(--buy)" if avis=="BUY" else "var(--sell)" if avis=="SELL" else "var(--wait)"
+                st.markdown(f"<div style='font-weight:800;color:{color}'>{avis}</div>", unsafe_allow_html=True)
 
-else:
-    # Cartes individuelles très lisibles
-    for _, r in df_all.iterrows():
-        title, head_cls, badge_cls = color_meta(r["Signal"])
-        st.markdown(f'<div class="card" style="padding:0;">'
-                    f'<div class="head {head_cls}">{title} — {r["Ticker"]}</div>'
-                    f'<div style="padding:12px 14px;">'
-                    f'<span class="{badge_cls}" style="margin-right:.5rem">Prix {r["Prix"]}</span>'
-                    f'<span class="badge badge-wait">RSI {r["RSI"]}</span> '
-                    f'<div class="small" style="margin-top:.4rem">🎯 TP1 <b>{r["TP1"]}</b> • TP2 <b>{r["TP2"]}</b> • 🛑 SL <b>{r["SL"]}</b> • ATR <b>{r["ATR"]}</b></div>'
-                    f'<div class="small">📝 {r["Raison"]}</div>'
-                    f'</div></div>', unsafe_allow_html=True)
+            st.markdown("<div class='sep'></div>", unsafe_allow_html=True)
+            st.markdown("<div class='small'>Logique</div>", unsafe_allow_html=True)
+            st.markdown(
+                "- Signals calculés par **RSI(14)** + **MACD(12-26)**  \n"
+                "- Croisement MACD et zones RSI (<30 Achat / >70 Vente)  \n"
+                "- **Avis experts** = pondération (1D & 4H > 1H > 15m > 1m)",
+                unsafe_allow_html=False
+            )
+            st.markdown('</div>', unsafe_allow_html=True)
 
-        if show_charts and isinstance(r["Data"], pd.DataFrame) and not r["Data"].empty:
-            d = r["Data"].reset_index().rename(columns={"index":"Date"})
-            chart = alt.Chart(d).mark_line().encode(
-                x=alt.X('Date:T', axis=alt.Axis(labels=False, ticks=False, title=None)),
-                y=alt.Y('Close:Q', axis=alt.Axis(title=None))
-            ).properties(height=110)
-            st.altair_chart(chart, use_container_width=True)
-        st.write("")
+    st.markdown("</div></div>", unsafe_allow_html=True)
 
-st.caption("⚠️ Outil éducatif. Niveaux indicatifs (ATR).")
+
+# ============ PAGE ============
+tickers = selection or default_watchlist
+for t in tickers:
+    render_asset(t)
+    st.markdown("<div class='sep'></div>", unsafe_allow_html=True)
+
+st.caption("⚠️ Outil éducatif. Les signaux sont indicatifs.")
